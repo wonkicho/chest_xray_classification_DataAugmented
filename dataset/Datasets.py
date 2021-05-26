@@ -1,16 +1,15 @@
 import os
 import torch
-import torch.nn as nn
 from torch.utils.data import Dataset
 from torch.utils.data import DataLoader
 import cv2
 import numpy as np
 
 class CustomDataset(Dataset):
-    def __init__(self, img_path, target,transforms = None, mode = None):
+    def __init__(self, img_path, transforms = None, mode = None):
         self.img_path = os.path.join(img_path, mode)
         self.transforms = transforms
-        self.target = target
+        self.mode = mode
 
     def __len__(self):
         return len(self.img_path)
@@ -21,5 +20,16 @@ class CustomDataset(Dataset):
         image = self.transforms(image = image)["image"]
         image = np.transpose(image, (2,0,1)).astype(np.float32)
 
-        target = self.target[index]
-        return {"image" : torch.tensor(image), "target" : torch.tensor(target)} 
+        if self.mode == "NORMAL":
+            target = [1 for _ in range(len(self.img_path))]
+        elif self.mode == "PNEUMONIA":
+            target = [0 for _ in range(len(self.img_path))]
+        
+        
+        return {
+                "image" : torch.tensor(image), 
+                "target" : torch.tensor(target)
+                } 
+
+if __name__ =="main":
+    pass
