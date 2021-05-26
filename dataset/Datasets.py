@@ -4,12 +4,16 @@ from torch.utils.data import Dataset
 from torch.utils.data import DataLoader
 import cv2
 import numpy as np
+import albumentations as A
+from albumentations.pytorch.transforms import ToTensorV2
+from munge_data import mungeFile
 
 class CustomDataset(Dataset):
-    def __init__(self, img_path, transforms = None, mode = None):
-        self.img_path = os.path.join(img_path, mode)
+    def __init__(self, img_path, target, transforms = None):
+        self.img_path = img_path
+        self.target = target
         self.transforms = transforms
-        self.mode = mode
+        
 
     def __len__(self):
         return len(self.img_path)
@@ -20,16 +24,26 @@ class CustomDataset(Dataset):
         image = self.transforms(image = image)["image"]
         image = np.transpose(image, (2,0,1)).astype(np.float32)
 
-        if self.mode == "NORMAL":
-            target = [1 for _ in range(len(self.img_path))]
-        elif self.mode == "PNEUMONIA":
-            target = [0 for _ in range(len(self.img_path))]
+        targets = self.target[index]
         
         
         return {
                 "image" : torch.tensor(image), 
-                "target" : torch.tensor(target)
+                "target" : torch.tensor(targets)
                 } 
 
-if __name__ =="main":
-    pass
+
+if __name__ == "__main__":
+    def get_train_transforms():
+        return A.Compose(
+            [
+                A.Resize(height=256, width=256, p=1),
+                ToTensorV2(p=1.0),
+            ], 
+            p=1.0, 
+        )
+
+    img_path = "C://Datasets/chest_xray/train/"
+    train_df = mungeFile(img_path)
+    dataset = CustomDataset(img_path=img_path, target = train_df['target'], transforms=get_train_transforms)
+    print(dataset)

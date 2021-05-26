@@ -1,0 +1,4 @@
+{
+    "python.pythonPath": "c:\\ProgramData\\Anaconda3\\envs\\dl_project\\python.exe",
+    "terminal.integrated.shellArgs.windows": ["%windir%\\system32\\cmd.exe"]
+}

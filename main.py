@@ -43,4 +43,4 @@ def get_valid_transforms():
     
 
 
-train_dataset = CustomDataset(train_path, transforms = get_train_transforms, mode = None)
+train_dataset = CustomDataset(train_path, transforms = get_train_transforms)
