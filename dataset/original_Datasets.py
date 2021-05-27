@@ -55,5 +55,3 @@ if __name__ == "__main__":
     data_loader = DataLoader(dataset, shuffle=True, num_workers=0)
     image = next(iter(data_loader))["image"]
     image = image.squeeze()
-    
-

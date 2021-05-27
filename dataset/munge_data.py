@@ -25,4 +25,4 @@ def mungeFile(img_path):
 if __name__ == "__main__":
     img_path = "C://Datasets/chest_xray/train/"
     train_df = mungeFile(img_path)
-    print(train_df["image_name"][0])
+    print(train_df[train_df["target"] == 1])
