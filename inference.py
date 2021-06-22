@@ -67,8 +67,9 @@ if __name__ == "__main__":
     test_dataset = CustomDataset(test_path, df = test_df, target = test_df['target'], transforms = get_test_transforms(),test=False, Cutmix=False)
     test_loader = torch.utils.data.DataLoader(test_dataset, batch_size = opt.Batch_size, shuffle=False, num_workers = CFG.NUM_WORKERS)
     
-    model.load_state_dict()
-
+    checkpoint = "checkpoints\efficientnet_b0_0.pth"
+    model.load_state_dict(torch.load(checkpoint))
+    
     for epoch in range(opt.Epochs):
         with torch.no_grad():
             inference_one_epoch(epoch, test_loader, device)
