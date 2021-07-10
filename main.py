@@ -4,6 +4,7 @@ import argparse
 import Config as CFG
 
 import numpy as np
+import matplotlib.pyplot as plt
 import CustomModel
 from tqdm import tqdm
 from random import shuffle
@@ -13,6 +14,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data.sampler import SequentialSampler, RandomSampler
 from torch.cuda.amp import autocast, GradScaler
+from sklearn.model_selection import GroupKFold, StratifiedKFold
 
 
 from albumentations.augmentations import transforms
@@ -25,17 +27,30 @@ from albumentations.pytorch.transforms import ToTensorV2
 
 
 #Augmentation
-def get_train_transforms():
-    return A.Compose(
-        [
-            #A.RandomSizedCrop(min_max_height=(800, 800), height=1024, width=1024, p=0.5),
-            A.HorizontalFlip(p=0.5),
-            A.VerticalFlip(p=0.5),
-            A.Resize(height=128, width=128, p=1),
-            ToTensorV2(p=1.0),
-        ], 
-        p=1.0, 
-    )
+if CFG.DATA_AUG:
+    def get_train_transforms():
+        return A.Compose(
+            [
+                #A.RandomSizedCrop(min_max_height=(800, 800), height=1024, width=1024, p=0.5),
+                A.HorizontalFlip(p=0.5),
+                A.VerticalFlip(p=0.5),
+                A.Resize(height=128, width=128, p=1),
+                A.ShiftScaleRotate(p=0.5),
+                A.HueSaturationValue(hue_shift_limit=0.2, sat_shift_limit=0.2, val_shift_limit=0.2, p=0.5),
+                A.RandomBrightnessContrast(brightness_limit=(-0.1,0.1), contrast_limit=(-0.1, 0.1), p=0.5),
+                ToTensorV2(p=1.0),
+            ], 
+            p=1.0, 
+        )
+else: 
+    def get_train_transforms():
+        return A.Compose(
+            [
+                A.Resize(height=128, width=128, p=1),
+                ToTensorV2(p=1.0),
+            ], 
+            p=1.0, 
+        )
 
 def get_valid_transforms():
     return A.Compose(
@@ -83,6 +98,8 @@ def train_one_epoch(epoch, model, train_loader, optimizer , device, loss_fn, sch
 
     if scheduler is not None and not schd_batch_update:
         scheduler.step()
+
+    return running_loss
                 
 
 def valid_one_epoch(epoch, model, loss_fn, val_loader, device, scheduler = None, schd_loss_update=False):
@@ -111,11 +128,13 @@ def valid_one_epoch(epoch, model, loss_fn, val_loader, device, scheduler = None,
         sample_num += y.shape[0]  
 
         if ((step + 1) % CFG.VERBOSE_STEP == 0) or ((step + 1) == len(val_loader)):
-            description = f'epoch {epoch} loss: {loss_sum/sample_num:.4f}'
+            valid_loss = loss_sum/sample_num
+            description = f'epoch {epoch} loss: {valid_loss:.4f}'
             pbar.set_description(description)
     
     image_preds_all = np.concatenate(image_preds_all)
     image_targets_all = np.concatenate(image_targets_all)
+    valid_Acc = (image_preds_all==image_targets_all).mean()
     print('validation accuracy = {:.4f}'.format((image_preds_all==image_targets_all).mean()))        
 
     if scheduler is not None:
@@ -123,6 +142,29 @@ def valid_one_epoch(epoch, model, loss_fn, val_loader, device, scheduler = None,
             scheduler.step(loss_sum/sample_num)
         else:
             scheduler.step()
+
+    return valid_Acc, valid_loss
+
+def plot_train(fold, tr_loss, val_loss, val_acc):
+    plt.rcParams.update({'font.size': 22})
+
+    fig = plt.figure(figsize=(18,14))
+    ax1 = fig.add_subplot(2,1,1)
+    ax2 = fig.add_subplot(2,1,2)
+    ax1.plot(tr_loss, color="darkorange" , label = "Train Loss")
+    ax1.plot(val_loss, color = "mediumslateblue", label = "Valid Loss")
+    ax1.set_ylabel("LOSS")
+    ax1.set_xlabel("Epoch")
+    ax1.set_title(f"{fold} fold Loss")
+    ax1.legend(ncol=2)
+    
+    ax2.plot(val_acc, color="skyblue")
+    ax2.set_ylabel("Valid_Acc")
+    ax2.set_xlabel("Epoch")
+    ax2.set_title(f"{fold} fold Accuracy")
+
+    plt.subplots_adjust(wspace=0.5, hspace=0.5)
+    plt.savefig(f'graph_result/GAN_CUTMIX_DA/{fold}_loss_Acc.png')
 
 
 
@@ -141,43 +183,56 @@ if __name__ == "__main__":
     train_dataframe = mungeFile(train_path)
     train_dataframe = train_dataframe.sample(frac=1).reset_index(drop=True)
 
-    train_len = int(len(train_dataframe))
-    tr_idx = int(train_len * 0.8)
+    folds = StratifiedKFold(n_splits=CFG.FOLD, shuffle=True, random_state=42).split(np.arange(train_dataframe.shape[0]), train_dataframe.target.values)
+    for fold, (trn_idx, val_idx) in enumerate(folds):
+        
+        print("{} fold Training".format(fold))
+        train_df = train_dataframe.loc[trn_idx, :].reset_index(drop=True)
+        valid_df = train_dataframe.loc[val_idx, :].reset_index(drop=True)
 
-    
-    train_df = train_dataframe[:tr_idx].reset_index(drop=True)
-    valid_df = train_dataframe[tr_idx:].reset_index(drop=True)
-    
-    
-    device = CFG.DEVICE
-    model = CustomModel.ChestClassifier(model_arch = opt.Model, n_class = 2, pretrained=True).to(device)
-    scaler = GradScaler() 
-    optimizer = torch.optim.Adam(model.parameters(), lr = CFG.LEARNING_RATE, weight_decay = CFG.WEIGHT_DECAY)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0 = 10, T_mult = 1, eta_min = 1e-6)
+        #hyper params
+        device = CFG.DEVICE
+        model = CustomModel.ChestClassifier(model_arch = opt.Model, n_class = 2, pretrained=True).to(device)
+        scaler = GradScaler() 
+        optimizer = torch.optim.Adam(model.parameters(), lr = CFG.LEARNING_RATE, weight_decay = CFG.WEIGHT_DECAY)
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0 = 10, T_mult = 1, eta_min = 1e-6)
 
+        loss_Train = nn.CrossEntropyLoss().to(device)
+        loss_Valid = nn.CrossEntropyLoss().to(device)
+        
+        #dataset
+        train_dataset = CustomDataset(train_path, df = train_df, target = train_df['target'], transforms = get_train_transforms(),test=False, Cutmix=CFG.TR_CUTMIX)
+        valid_dataset = CustomDataset(train_path, df = valid_df, target = valid_df['target'], transforms = get_valid_transforms(),test=False, Cutmix=CFG.VAL_CUTMIX)
 
+        #dataloader
+        train_loader = torch.utils.data.DataLoader(train_dataset, batch_size = opt.Batch_size, shuffle=True , num_workers = CFG.NUM_WORKERS)
+        valid_loader = torch.utils.data.DataLoader(valid_dataset, batch_size = opt.Batch_size, shuffle=True, num_workers = CFG.NUM_WORKERS)
+        
+        best_score = 0
 
-    #dataset
-    train_dataset = CustomDataset(train_path, df = train_df, target = train_df['target'], transforms = get_train_transforms(),test=False, Cutmix=True)
-    valid_dataset = CustomDataset(train_path, df = valid_df, target = valid_df['target'], transforms = get_valid_transforms(),test=False, Cutmix=False)
+        train_loss_list = []
+        val_loss_list = []
+        val_acc_list = []
 
-    #dataloader
-    train_loader = torch.utils.data.DataLoader(train_dataset, batch_size = opt.Batch_size, shuffle=True , num_workers = CFG.NUM_WORKERS)
-    valid_loader = torch.utils.data.DataLoader(valid_dataset, batch_size = opt.Batch_size, shuffle=True, num_workers = CFG.NUM_WORKERS)
-    
-    #loss function
-    loss_Train = nn.CrossEntropyLoss().to(device)
-    loss_Valid = nn.CrossEntropyLoss().to(device)
-    
-    for epoch in range(opt.Epochs):
-        train_one_epoch(epoch, model = model, loss_fn = loss_Train, optimizer=optimizer, train_loader=train_loader, device = device, scheduler=scheduler, schd_batch_update=False)
+        for epoch in range(opt.Epochs):
+            train_loss = train_one_epoch(epoch, model = model, loss_fn = loss_Train, optimizer=optimizer, train_loader=train_loader, device = device, scheduler=scheduler, schd_batch_update=False)
 
-        with torch.no_grad():
-            valid_one_epoch(epoch, model = model, loss_fn = loss_Valid, val_loader= valid_loader, device=device, scheduler=None, schd_loss_update=False)
+            with torch.no_grad():
+                val_score, valid_loss = valid_one_epoch(epoch, model = model, loss_fn = loss_Valid, val_loader= valid_loader, device=device, scheduler=None, schd_loss_update=False)
 
-        torch.save(model.state_dict(), 'checkpoints/{}_{}.pth'.format(opt.Model, epoch))
+            train_loss_list.append(train_loss)
+            val_loss_list.append(valid_loss)
+            val_acc_list.append(val_score)
 
-    del model, optimizer, train_loader, valid_loader, scaler, scheduler
-    torch.cuda.empty_cache()
-    
-    
+            if best_score < val_score:
+                best_score = val_score
+                torch.save(model.state_dict(), 'checkpoints/Gan_CUTMIX_DA/{}_{}.pth'.format(opt.Model, fold))
+
+        plot_train(fold,train_loss_list, val_loss_list,val_acc_list )
+
+        del model, optimizer, train_loader, valid_loader, scaler, scheduler
+        torch.cuda.empty_cache()
+
+        
+            
+
