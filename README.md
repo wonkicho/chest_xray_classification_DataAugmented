@@ -4,3 +4,7 @@
 2. Data Augmentation을 사용하였을 때
 3. Mix-up 기법을 적용하였을 때
 4. GAN 모델을 통한 데이터 증강
+
+
+### Classification Model
+- EfficientNet-b0
