@@ -15,5 +15,5 @@ Chest X-ray Image
 https://www.kaggle.com/datasets/paultimothymooney/chest-xray-pneumonia
 
 ### Performance
-
+graph_result 참고
 
